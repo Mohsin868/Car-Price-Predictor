@@ -92,6 +92,9 @@ def train_model_pipeline(data_df):
     numerical_features = X.select_dtypes(include=np.number).columns.tolist()
     categorical_features = X.select_dtypes(include='object').columns.tolist()
 
+    # 'symboling' is now kept in numerical_features as requested.
+    # No explicit removal here.
+
     # Create preprocessing pipelines for numerical and categorical features
     numerical_transformer = StandardScaler()
     categorical_transformer = OneHotEncoder(handle_unknown='ignore')
@@ -137,38 +140,94 @@ def get_user_input():
     input_data = {}
 
     st.sidebar.subheader("Numerical Features:")
-    for col in numerical_features_used:
-        # Skip engineered features from direct user input; they'll be calculated from base features
-        if col in ['PowerToWeightRatio', 'AvgMPG']:
-            continue
-        
-        # Ensure the column exists in raw_df before trying to get min/max/mean
-        if col in raw_df.columns:
-            col_data = raw_df[col].dropna()
-            if pd.api.types.is_numeric_dtype(col_data) and not col_data.empty:
-                min_val, max_val = float(col_data.min()), float(col_data.max())
-                mean_val = float(col_data.mean())
-                
-                # Fix: Ensure step_val is always float if min_val/max_val are floats
-                # This resolves the StreamlitAPIException: Slider value arguments must be of matching types.
-                if col_data.dtype in [np.int64, np.int32]:
-                    # If original data is integer, use integer step, but ensure it's a float for consistency
-                    step_val = 1.0
-                else:
-                    # For float data, determine a reasonable float step
-                    step_val = (max_val - min_val) / 100.0 # Default to 1/100th of range for fine tuning
-                    if step_val < 0.01: step_val = 0.01 # Minimum step size
-                    elif step_val > 1.0: step_val = 1.0 # Cap max step size for finer control
-                    step_val = round(step_val, 2) # Round step to avoid very long decimals
-                    if step_val == 0.0: step_val = 0.1 # Prevent zero step if min/max are too close
 
-                input_data[col] = st.sidebar.slider(f"{col.replace('_', ' ').title()}", min_val, max_val, mean_val, step=step_val)
+    # Define a preferred order for some common features
+    preferred_order = [
+        'horsepower', 'enginesize', 'carwidth', 'curbweight',
+        'citympg', 'highwaympg', 'symboling' # Place symboling after MPG
+    ]
+    
+    # Collect inputs for preferred order features first
+    for col in preferred_order:
+        if col in numerical_features_used:
+            # Skip engineered features from direct user input; they'll be calculated from base features
+            if col in ['PowerToWeightRatio', 'AvgMPG']:
+                continue
+            
+            if col in raw_df.columns: # Ensure the column exists in raw_df
+                col_data = raw_df[col].dropna()
+                if pd.api.types.is_numeric_dtype(col_data) and not col_data.empty:
+                    min_val = float(col_data.min())
+                    max_val = float(col_data.max())
+                    mean_val = float(col_data.mean())
+                    
+                    if col_data.dtype in [np.int64, np.int32]:
+                        step_val = 1.0
+                    else:
+                        step_val = (max_val - min_val) / 100.0
+                        if step_val < 0.01: step_val = 0.01
+                        elif step_val > 1.0: step_val = 1.0
+                        step_val = round(step_val, 2)
+                        if step_val == 0.0: step_val = 0.1
+
+                    # Format min/max for display, handling decimals appropriately
+                    min_display = f"{min_val:.0f}" if step_val >= 1.0 else f"{min_val:.2f}"
+                    max_display = f"{max_val:.0f}" if step_val >= 1.0 else f"{max_val:.2f}"
+                    
+                    input_data[col] = st.sidebar.number_input(
+                        f"{col.replace('_', ' ').title()} (Min: {min_display}, Max: {max_display})", # Display min/max here
+                        min_value=min_val, 
+                        max_value=max_val, 
+                        value=mean_val, 
+                        step=step_val, 
+                        format="%.2f" if step_val < 1.0 else "%.0f"
+                    )
+                else:
+                    st.sidebar.warning(f"Could not create number input for '{col}' (not purely numerical or empty). Defaulting to 0.")
+                    input_data[col] = 0.0
             else:
-                st.sidebar.warning(f"Could not create slider for '{col}' (not purely numerical or empty). Defaulting to 0.")
+                st.sidebar.warning(f"Numerical feature '{col}' not found in raw data. Defaulting to 0.")
                 input_data[col] = 0.0
-        else:
-            st.sidebar.warning(f"Numerical feature '{col}' not found in raw data. Defaulting to 0.")
-            input_data[col] = 0.0
+    
+    # Collect inputs for any other numerical features not in preferred_order
+    for col in numerical_features_used:
+        if col not in preferred_order: # Only process if not already handled
+            if col in ['PowerToWeightRatio', 'AvgMPG']:
+                continue # Skip engineered features
+
+            if col in raw_df.columns:
+                col_data = raw_df[col].dropna()
+                if pd.api.types.is_numeric_dtype(col_data) and not col_data.empty:
+                    min_val = float(col_data.min())
+                    max_val = float(col_data.max())
+                    mean_val = float(col_data.mean())
+                    
+                    if col_data.dtype in [np.int64, np.int32]:
+                        step_val = 1.0
+                    else:
+                        step_val = (max_val - min_val) / 100.0
+                        if step_val < 0.01: step_val = 0.01
+                        elif step_val > 1.0: step_val = 1.0
+                        step_val = round(step_val, 2)
+                        if step_val == 0.0: step_val = 0.1
+
+                    min_display = f"{min_val:.0f}" if step_val >= 1.0 else f"{min_val:.2f}"
+                    max_display = f"{max_val:.0f}" if step_val >= 1.0 else f"{max_val:.2f}"
+
+                    input_data[col] = st.sidebar.number_input(
+                        f"{col.replace('_', ' ').title()} (Min: {min_display}, Max: {max_display})", # Display min/max here
+                        min_value=min_val, 
+                        max_value=max_val, 
+                        value=mean_val, 
+                        step=step_val, 
+                        format="%.2f" if step_val < 1.0 else "%.0f"
+                    )
+                else:
+                    st.sidebar.warning(f"Could not create number input for '{col}' (not purely numerical or empty). Defaulting to 0.")
+                    input_data[col] = 0.0
+            else:
+                st.sidebar.warning(f"Numerical feature '{col}' not found in raw data. Defaulting to 0.")
+                input_data[col] = 0.0
 
 
     st.sidebar.subheader("Categorical Features:")
@@ -222,5 +281,9 @@ st.write(f"- **R-squared (R² Score):** {r2_val:.4f}")
 st.info("These metrics represent the model's performance on unseen data during its in-app training and evaluation phase.")
 
 st.markdown("---")
-st.markdown("Developed for Semester Final Project")
 
+# --- 6. Optional: Show Raw Data ---
+if st.checkbox("Show Raw Data"):
+    st.subheader("📋 Raw Data Preview")
+    st.dataframe(raw_df.head(10), use_container_width=True)
+    
